@@ -14,3 +14,4 @@ build/
 .envrc
 *.sqlite3
 *.db
+NO_GIT_*
