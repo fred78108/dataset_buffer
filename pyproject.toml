@@ -1,0 +1,19 @@
+[project]
+name = "dataset-buffer"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = [
+  "datasets",
+  "flake8-pyproject",
+  "numpy",
+  "pandas",
+  "Pillow",
+  "pyarrow",
+  "pytest-mock",
+  "pytest",
+  "torch",
+]
+
+[build-system]
+requires = ["setuptools", "wheel"]
+build-backend = "setuptools.build_meta"
