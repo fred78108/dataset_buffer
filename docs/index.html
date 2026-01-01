@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Dataset-Buffer Documentation</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <style>
+        body { font-family: Arial, sans-serif; margin: 2em; background: #f9f9f9; }
+        h1, h2, h3 { color: #333; }
+        pre { background: #eee; padding: 1em; border-radius: 5px; }
+        code { background: #eee; padding: 2px 4px; border-radius: 3px; }
+        .status { font-size: 1.1em; color: #d97706; }
+        .features, .retention, .accessors { margin-bottom: 2em; }
+        table { border-collapse: collapse; width: 100%; margin-bottom: 2em; }
+        th, td { border: 1px solid #ccc; padding: 8px; text-align: left; }
+        th { background: #f0f0f0; }
+    </style>
+</head>
+<body>
+    <h1>Dataset-Buffer</h1>
+    <p class="status"><strong>Status:</strong> 🚧 Under development</p>
+    <p>
+        The dataset buffer is a Python package for building a mutable buffer that normalizes heterogeneous samples and controls how much historical data is retained between training epochs.
+    </p>
+
+    <h2>Motivation</h2>
+    <p>
+        Adjust your training dataset over multiple epochs with an easy-to-use, predictable mechanism for dataset modification, while supporting consistent dataset loading.
+    </p>
+
+    <h2>Key Features</h2>
+    <ul class="features">
+        <li>Automatic normalization for <code>dict</code>, <code>torch.Tensor</code>, and <code>PIL.Image.Image</code> samples, plus extensible custom normalizers.</li>
+        <li>Schema-safe appends that reject mixed sample types once a buffer is initialized.</li>
+        <li>Retention policies (<code>latest</code>, <code>oldest</code>, <code>random</code>) with fractional keep ratios to bound memory growth.</li>
+        <li>Arrow-native storage enabling zero-copy batch operations and conversions to Python dicts or PyTorch tensors.</li>
+    </ul>
+
+    <h2>Installation</h2>
+    <pre><code>pip install -e .</code></pre>
+
+    <h2>Quick Start</h2>
+    <pre><code>from dataset_buffer.buffer import DatasetBuffer
+import torch
+from PIL import Image
+
+buffer = DatasetBuffer()
+
+buffer.append([
+    {"label": 0, "meta": "first"},
+    {"label": 1, "meta": "second"},
+])
+buffer.append(
+    {"label": 1, "meta": "third"},
+    retain_prior=0.5,
+    retain_prior_by="latest")
+
+print(len(buffer))          # total rows retained
+print(buffer[0])            # arrow slice as dict
+batch = buffer.get_batch([0, len(buffer) - 1])
+torch_batch = buffer.to_torch()
+</code></pre>
+
+    <h2>Normalization Pipeline</h2>
+    <ol>
+        <li>The buffer searches registered normalizers via <code>@register_normalizer</code>.</li>
+        <li>Built-ins:
+            <ul>
+                <li><code>torch.Tensor → {"tensor": np.ndarray}</code> (CPU, list-friendly).</li>
+                <li><code>PIL.Image.Image → {"image": PNG bytes}</code>.</li>
+            </ul>
+        </li>
+        <li>Dicts pass through unchanged; other objects fall back to <code>vars(obj)</code>.</li>
+    </ol>
+    <p>Register custom normalizers:</p>
+    <pre><code>from dataset_buffer.buffer import register_normalizer
+
+@register_normalizer(MySample)
+def normalize_sample(sample: MySample):
+    return {"text": sample.text, "score": sample.score}
+</code></pre>
+
+    <h2>Retention Strategies</h2>
+    <table class="retention">
+        <tr>
+            <th>Parameter</th>
+            <th>Description</th>
+        </tr>
+        <tr>
+            <td><code>retain_prior</code></td>
+            <td>Fraction of existing rows to keep (negative clears all).</td>
+        </tr>
+        <tr>
+            <td><code>retain_prior_by</code></td>
+            <td><code>latest</code>, <code>oldest</code>, or <code>random</code> selection semantics.</td>
+        </tr>
+    </table>
+    <p>
+        Retention is applied <strong>before</strong> new samples are appended, ensuring memory limits are enforced per call.
+    </p>
+
+    <h2>Conversions and Accessors</h2>
+    <ul class="accessors">
+        <li><code>len(buffer)</code> / iteration yield Arrow row slices.</li>
+        <li><code>buffer[i]</code> returns a single-row dict.</li>
+        <li><code>buffer.get_batch(indices)</code> returns a <code>pyarrow.Table</code>.</li>
+        <li><code>buffer.to_pydict()</code> → column-wise Python lists.</li>
+        <li><code>buffer.to_torch()</code> → <code>torch.Tensor</code> per column (best for numeric data).</li>
+    </ul>
+</body>
+</html>

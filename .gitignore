@@ -15,3 +15,4 @@ build/
 *.sqlite3
 *.db
 NO_GIT_*
+.tox

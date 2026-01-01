@@ -1,19 +1,108 @@
 [project]
 name = "dataset-buffer"
 version = "0.1.0"
-requires-python = ">=3.12"
-dependencies = [
-  "datasets",
-  "flake8-pyproject",
-  "numpy",
-  "pandas",
-  "Pillow",
-  "pyarrow",
-  "pytest-mock",
-  "pytest",
-  "torch",
-]
+description = "DatasetBuffer offers a lightweight, PyArrow-backed buffer for dynamic dataset construction."
+requires-python = ">=3.10"
+dependencies = ["datasets", "numpy", "Pillow", "pyarrow", "torch"]
+
+[project.optional-dependencies]
+dev = ["flake8-pyproject", "pytest", "pytest-mock", "mypy"]
+
+[project.urls]
+Homepage = "https://github.com/fred78108/dataset_buffer"
 
 [build-system]
 requires = ["setuptools", "wheel"]
 build-backend = "setuptools.build_meta"
+
+# -----------------------------
+# Pytest
+# -----------------------------
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+
+# -----------------------------
+# Mypy
+# -----------------------------
+[tool.mypy]
+pretty = true
+check_untyped_defs = true
+
+[[tool.mypy.overrides]]
+module = ["toml"]
+ignore_missing_imports = true
+
+# -----------------------------
+# Flake8
+# -----------------------------
+[tool.flake8]
+max-line-length = 120
+extend-ignore = ["E203"]
+per-file-ignores = [
+  "**/*.py:F841",        # unused ellipsis
+  "**/__init__.py:F401",
+]
+
+# -----------------------------
+# Tox
+# -----------------------------
+[tool.tox]
+requires = ["tox>=4.23.2"]
+env_list = ["py310", "py311", "py312", "py313", "py314", "type", "lint"]
+
+# Base environment for running tests
+[tool.tox.env_run_base]
+description = "Run tests under {base_python}"
+deps = ["pytest"]
+commands = [["pytest"]]
+
+# Python 3.10 test environment
+[tool.tox.env.py310]
+inherits = ["env_run_base"]
+base_python = ["python3.10"]
+
+# Python 3.11 test environment
+[tool.tox.env.py311]
+inherits = ["env_run_base"]
+base_python = ["python3.11"]
+
+# Python 3.12 test environment
+[tool.tox.env.py312]
+inherits = ["env_run_base"]
+base_python = ["python3.12.12"]
+
+[tool.tox.env.py313]
+inherits = ["env_run_base"]
+base_python = ["python3.13"]
+
+[tool.tox.env.py314]
+inherits = ["env_run_base"]
+base_python = ["python3.14"]
+
+# Type checking environment
+[tool.tox.env.type]
+description = "Run type checks"
+base_python = ["python3.12.12"]
+deps = ["mypy"]
+commands = [
+  [
+    "mypy",
+    "src",
+    "--no-namespace-packages",
+    "--ignore-missing-imports",
+  ],
+]
+
+# Linting environment
+[tool.tox.env.lint]
+description = "Run flake8 linter"
+deps = ["flake8"]
+base_python = ["python3.12.12"]
+commands = [["flake8", "src"]]
+
+# Optional: build environment for packaging
+[tool.tox.env.build]
+description = "Build distribution artifacts"
+deps = ["build"]
+base_python = ["python3.12.12"]
+commands = [["python", "-m", "build"]]

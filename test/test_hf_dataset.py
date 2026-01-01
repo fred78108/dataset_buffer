@@ -120,3 +120,46 @@ def test_add_and_get_batch_with_invalid_indices():
     buffer.append(samples)
     with pytest.raises(IndexError):
         buffer.get_batch([10, 20])
+
+
+def test_to_hf_dataset():
+    buffer = DatasetBuffer()
+    samples = [{"key": i} for i in range(5)]
+    buffer.append(samples)
+    result = buffer.to_hf_dataset()
+    assert isinstance(result, Dataset)
+
+
+def test_text_structured_dataset():
+    buffer = DatasetBuffer()
+    samples = [
+        {
+            "left": {
+                "a": "a",
+                "b": 123
+            },
+            "right": {
+                "a": "b",
+                "b": "444"
+            },
+            "label": 0
+        },
+        {
+            "left": {
+                "a": "a",
+                "b": 555
+            },
+            "right": {
+                "a": "a",
+                "b": "555"
+            },
+            "label": 1
+        }
+    ]
+    ds = Dataset.from_list(samples)
+    # print(ds.to_iterable_dataset())
+    buffer.append(ds)
+    result = buffer.to_hf_dataset()
+    assert isinstance(result, Dataset)
+    assert result[0] in samples
+    assert result[1] in samples

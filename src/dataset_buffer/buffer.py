@@ -1,13 +1,33 @@
-"""The public and primary interface into the DatasetBuffer"""
+"""
+DatasetBuffer: A dynamic, type-safe buffer for dataset management.
 
+This module provides the primary public interface for the DatasetBuffer,
+enabling efficient storage, normalization, and manipulation of datasets
+using Apache Arrow tables. It supports appending, batching, and conversion
+to various formats (e.g., PyTorch tensors), with extensible normalization
+for custom data types.
+
+Key features:
+- Type-safe, schema-aligned buffer using Apache Arrow
+- Extensible normalization for images, tensors, and custom types
+- Retention strategies for managing buffer size and data freshness
+- Easy conversion to Python dicts and PyTorch tensors
+
+Intended for use in data pipelines, machine learning workflows, and
+applications requiring dynamic, in-memory dataset management.
+"""
+from dataclasses import dataclass
 from typing import (
     Any,
     Callable,
     Dict,
+    Iterable,
     Literal,
     Optional,
-    Type
+    Type,
+    Union
 )
+import datasets
 import numpy as np
 import pyarrow as pa
 from pyarrow import compute as pc
@@ -19,12 +39,20 @@ import io
 # Normalization
 # ----------------------------------------------------------------------
 
-Normalized = Dict[str, Any]  # or your TypedDict union
-
+Normalized = Union[Dict[str, Any], list[Any]]
 NORMALIZERS: Dict[Type[Any], Callable[[Any], Normalized]] = {}
 
 
 def register_normalizer(type_: Type[Any]):
+    """
+    Decorator to register a normalization function for a specific type.
+
+    Args:
+        type_ (Type[Any]): The type to register the normalizer for.
+
+    Returns:
+        Callable: The decorator that registers the function.
+    """
     def decorator(fn: Callable[[Any], Normalized]):
         NORMALIZERS[type_] = fn
         return fn
@@ -33,6 +61,15 @@ def register_normalizer(type_: Type[Any]):
 
 @register_normalizer(Image.Image)
 def normalize_pil(img: Image.Image) -> Normalized:
+    """
+    Normalizes a PIL Image by converting it to PNG bytes.
+
+    Args:
+        img (Image.Image): The PIL Image to normalize.
+
+    Returns:
+        Normalized: A dictionary with the image bytes.
+    """
     buffer = io.BytesIO()
     img.save(buffer, format="PNG")
     return {"image": buffer.getvalue()}
@@ -40,8 +77,44 @@ def normalize_pil(img: Image.Image) -> Normalized:
 
 @register_normalizer(torch.Tensor)
 def normalize_torch(t: torch.Tensor) -> Normalized:
+    """
+    Normalizes a torch.Tensor by converting it to a list.
+
+    Args:
+        t (torch.Tensor): The tensor to normalize.
+
+    Returns:
+        Normalized: A dictionary with the tensor as a list.
+    """
     return {"tensor": t.cpu().numpy().tolist()}
 
+
+@register_normalizer(datasets.Dataset)
+def normalize_hf_dataset(t: datasets.Dataset) -> Normalized:
+    """
+    Normalizes a HF datasets.Dataset by converting it to a list of dicts (row-wise).
+
+    Args:
+        t (datasets.Dataset): The Huggingface Dataset to normalize
+
+    Returns:
+        list[Normalized]: List of row dicts.
+    """
+    assert isinstance(t, datasets.Dataset)
+    return t.to_list()
+
+
+# ----------------------------------------------------------------------
+# Supporting Structure
+# ----------------------------------------------------------------------
+
+@dataclass
+class Stage:
+    """An entry for staging of data. Allows extending functionality and
+    avoiding duplication of processing steps such as on-append."""
+    name: str
+    func: Callable[[Iterable], None]
+    enabled: bool = True
 
 # ----------------------------------------------------------------------
 # The primary buffer
@@ -49,33 +122,75 @@ def normalize_torch(t: torch.Tensor) -> Normalized:
 
 
 class DatasetBuffer:
-    """A dataset is dynamic and creates a "buffer" that allows for the
-    modification of the dataset.
     """
-    def __init__(self, data: Optional[Any] = None):
+    A dynamic dataset buffer that allows for modification and management
+    of datasets using Apache Arrow tables.
+
+    Provides methods for appending, normalizing, batching, and converting
+    data to various formats.
+    """
+    def __init__(
+        self,
+        data: Optional[Any] = None,
+        max_size: Optional[int] = None,
+        drop_strategy: Literal["random", "oldest"] = "oldest"
+    ):
+        """
+        Initialize the DatasetBuffer.
+
+        Args:
+            data (Optional[Any], optional): Initial data to append.
+                Defaults to None.
+        """
         self.table = pa.table({})  # empty table
+        self._append_stages: list[Stage] = []  # start with no appends
+        self._prepare_stages: list[Stage] = []  # start with no prepares
+        self.max_size = max_size
+        self.drop_strategy: Literal["random", "oldest"] = drop_strategy
         self._cur_type: Optional[Type] = None
         if data is not None:
             self.append(data)
 
     def __len__(self) -> int:
+        """
+        Returns the number of rows in the buffer.
+
+        Returns:
+            int: Number of rows.
+        """
         return len(self.table)
 
     def __getitem__(self, idx: int) -> dict:
+        """
+        Get a single row as a dictionary.
+
+        Args:
+            idx (int): Row index.
+
+        Returns:
+            dict: The row as a dictionary.
+        """
         return self.table.slice(idx, 1).to_pydict()
 
     def __iter__(self):
+        """
+        Iterate over rows in the buffer.
+
+        Yields:
+            dict: Each row as a dictionary.
+        """
         for i in range(len(self.table)):
             yield self.table[i]
 
     def __contains__(self, item):
-        """_summary_
+        """
+        Check if an item exists in the buffer.
 
         Args:
-            item (_type_): _description_
+            item (dict): The item to check.
 
         Returns:
-            _type_: _description_
+            bool: True if the item exists, False otherwise.
         """
         masks = [
             pc.equal(self.table[col], item[col])    # type: ignore
@@ -87,9 +202,40 @@ class DatasetBuffer:
         return pc.call_function("any", combined).as_py()
 
     def get_batch(self, indices: list[int]) -> pa.Table:
+        """
+        Get a batch of rows by indices.
+
+        Args:
+            indices (list[int]): List of row indices.
+
+        Returns:
+            pa.Table: The batch as an Arrow table.
+        """
         return self.table.take(indices)
 
+    def set_append_stages(self, stages: list[Stage]) -> None:
+        # safety check
+        assert all([isinstance(stage, Stage) for stage in stages])
+        self._append_stages = stages.copy()
+
+    def set_prepare_stages(self, stages: list[Stage]) -> None:
+        # safety check
+        assert all([isinstance(stage, Stage) for stage in stages])
+        self._prepare_stages = stages.copy()
+
     def normalize(self, sample: Any) -> Normalized:
+        """
+        Normalize a sample using registered normalizers or default strategies.
+
+        Args:
+            sample (Any): The sample to normalize.
+
+        Returns:
+            Normalized: The normalized sample.
+
+        Raises:
+            TypeError: If the sample type is unsupported.
+        """
         for t, fn in NORMALIZERS.items():
             if isinstance(sample, t):
                 return fn(sample)
@@ -102,6 +248,17 @@ class DatasetBuffer:
         raise TypeError(f"Unsupported sample type: {type(sample)}")
 
     def _apply_retain_prior(self, retain_prior, retain_prior_by):
+        """
+        Retain a fraction of prior data in the buffer according to
+        the strategy.
+
+        Args:
+            retain_prior (float): Fraction of data to retain (0 to 1).
+            retain_prior_by (str): Strategy: 'latest', 'oldest', or 'random'.
+
+        Raises:
+            ValueError: If an unknown strategy is provided.
+        """
         if retain_prior < 0:
             self.table = pa.table({})   # clear all
         if retain_prior >= 1 or len(self.table) == 0:
@@ -130,18 +287,60 @@ class DatasetBuffer:
         else:
             raise ValueError(f"Unknown retain_prior_by: {retain_prior_by}")
 
+    def _reduce_size(self) -> None:
+        n = len(self.table)
+        if self.max_size is None:
+            return  # no-op
+        if n <= self.max_size:
+            return  # no-op
+        # we have exceeded the max side which is set
+        reduce_by_count = self.max_size
+
+        if self.drop_strategy == "oldest":
+            # Keep the last `reduce_by_count` rows (drop the oldest)
+            self.table = self.table.slice(n - reduce_by_count, reduce_by_count)
+
+        elif self.drop_strategy == "random":
+            idx = np.random.choice(n, size=reduce_by_count, replace=False)
+            idx = np.sort(idx)
+            self.table = self.table.take(pa.array(idx))
+
     def append(
         self,
         samples: Any,
         retain_prior: float = 1,
         retain_prior_by: Literal["random", "latest", "oldest"] = "random"
     ):
+        """
+        Append samples to the buffer, optionally retaining a fraction of
+        prior data.
+
+        Args:
+            samples (Any): The sample(s) to append.
+            retain_prior (float, optional): Fraction of prior data to retain.
+                Defaults to 1.
+            retain_prior_by (Literal["random", "latest", "oldest"], optional):
+                Retention strategy. Defaults to "random".
+
+        Raises:
+            ValueError: If sample types are inconsistent.
+        """
         # any prior adjustments needed?
         self._apply_retain_prior(retain_prior, retain_prior_by)
         # now setup
         if not isinstance(samples, list):
             samples = [samples]
-        normalized = [self.normalize(s) for s in samples]
+        # call append stages
+        for stage in self._append_stages:
+            pass
+        normalized = []
+        for s in samples:
+            norm = self.normalize(s)
+            if isinstance(norm, list):
+                normalized.extend(norm)
+            else:
+                normalized.append(norm)
+        # print(normalized[0])
         if self._cur_type is None and len(samples) > 0:
             self._cur_type = type(samples[0])
         # safety check to ensure no mixing.
@@ -166,10 +365,33 @@ class DatasetBuffer:
                 [self.table, new_table],
                 promote_options="default"
             )
+        # reduce needed?
+        if self.max_size is not None:
+            self._reduce_size()
 
     def to_pydict(self) -> dict[str, list]:
+        """
+        Convert the buffer to a Python dictionary.
+
+        Returns:
+            dict[str, list]: The buffer as a dictionary of columns.
+        """
         return self.table.to_pydict()
 
     def to_torch(self) -> dict[str, torch.Tensor]:
+        """
+        Convert the buffer to a dictionary of torch.Tensors.
+
+        Returns:
+            dict[str, torch.Tensor]: The buffer as tensors.
+        """
         batch = self.table.to_pydict()
         return {k: torch.tensor(v) for k, v in batch.items()}
+
+    def to_hf_dataset(self) -> datasets.Dataset:
+        """Converts the buffer to a Huggingface Dataset
+
+        Returns:
+            datasets.Dataset: _description_
+        """
+        return datasets.Dataset.from_dict(self.to_pydict())
