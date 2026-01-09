@@ -16,12 +16,11 @@ Key features:
 Intended for use in data pipelines, machine learning workflows, and
 applications requiring dynamic, in-memory dataset management.
 """
-from dataclasses import dataclass
+
 from typing import (
     Any,
     Callable,
     Dict,
-    Iterable,
     Literal,
     Optional,
     Type,
@@ -34,7 +33,7 @@ from pyarrow import compute as pc
 import torch
 from PIL import Image
 import io
-
+from .structure import Stage
 # ----------------------------------------------------------------------
 # Normalization
 # ----------------------------------------------------------------------
@@ -103,19 +102,6 @@ def normalize_hf_dataset(t: datasets.Dataset) -> Normalized:
     assert isinstance(t, datasets.Dataset)
     return t.to_list()
 
-
-# ----------------------------------------------------------------------
-# Supporting Structure
-# ----------------------------------------------------------------------
-
-@dataclass
-class Stage:
-    """An entry for staging of data. Allows extending functionality and
-    avoiding duplication of processing steps such as on-append."""
-    name: str
-    func: Callable[[Iterable], None]
-    enabled: bool = True
-
 # ----------------------------------------------------------------------
 # The primary buffer
 # ----------------------------------------------------------------------
@@ -160,6 +146,9 @@ class DatasetBuffer:
         """
         return len(self.table)
 
+    def target_item(self, idx: int) -> dict:
+        return self.table.to_pylist()[idx]
+
     def __getitem__(self, idx: int) -> dict:
         """
         Get a single row as a dictionary.
@@ -170,6 +159,7 @@ class DatasetBuffer:
         Returns:
             dict: The row as a dictionary.
         """
+        # return self.table.to_pylist()[idx]
         return self.table.slice(idx, 1).to_pydict()
 
     def __iter__(self):
@@ -179,8 +169,8 @@ class DatasetBuffer:
         Yields:
             dict: Each row as a dictionary.
         """
-        for i in range(len(self.table)):
-            yield self.table[i]
+        for row in self.table.to_pylist():
+            yield row
 
     def __contains__(self, item):
         """
@@ -377,6 +367,44 @@ class DatasetBuffer:
             dict[str, list]: The buffer as a dictionary of columns.
         """
         return self.table.to_pydict()
+
+    def update(self, index: int, row: dict) -> None:
+        """
+        Updates a row at a specific index.
+
+        This method is not highly performant for large tables as it
+        involves slicing and concatenating immutable Arrow tables.
+
+        Args:
+            index (int): The index of the row to update.
+            row (dict): The new data for the row.
+        """
+        if not (0 <= index < len(self.table)):
+            raise IndexError("Index out of range")
+
+        # Create a new table for the updated row
+        updated_row_table = pa.Table.from_pylist([row])
+
+        # Slice the original table
+        table_before = self.table.slice(0, index)
+        table_after = self.table.slice(index + 1)
+
+        # Concatenate the parts
+        tables_to_concat = []
+        if len(table_before) > 0:
+            tables_to_concat.append(table_before)
+
+        tables_to_concat.append(updated_row_table)
+
+        if len(table_after) > 0:
+            tables_to_concat.append(table_after)
+
+        if not tables_to_concat:
+            self.table = pa.table({})
+        else:
+            self.table = pa.concat_tables(
+                tables_to_concat, promote_options="default"
+            )
 
     def to_torch(self) -> dict[str, torch.Tensor]:
         """
