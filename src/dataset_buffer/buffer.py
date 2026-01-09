@@ -15,6 +15,11 @@ Key features:
 
 Intended for use in data pipelines, machine learning workflows, and
 applications requiring dynamic, in-memory dataset management.
+
+TODO:
+
+1. revisit "store as string logic" need a way to handle mixed values.
+
 """
 
 from typing import (
