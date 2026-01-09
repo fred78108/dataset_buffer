@@ -1,4 +1,4 @@
-# Dataset-Buffer
+# Dataset-Buffer (rename to Easy-bake dataset???)
 > **Status:** 🚧 Under development
 
 The dataset buffer is a small package for building a mutable buffer that can normalize heterogeneous samples and control how much historical data is retained between training epochs.
@@ -96,3 +96,25 @@ buffer.append(hf_dataset)
 hf_converted = buffer.to_hf_dataset()
 print(hf_converted)
 ```
+
+## Baking datasets with recipes
+
+Like baking a cake a dataset also needs a recipe. The `bake` function is a powerful utility for creating datasets from structured recipes. It processes a sequence of instructions, allowing you to define how data is added, transformed, and prepared in a controlled and repeatable manner.
+
+### Key Concepts:
+- **Recipes**: A `DatasetRecipe` object that contains a list of instructions for dataset creation.
+- **Instructions**: Steps that define actions such as adding data (`add_ingredient`) or transforming data (`prepare_step`).
+- **Ingredients**: Data sources with optional filters and quantity limits.
+- **Preparation Steps**: Transformations applied to a subset of the dataset.
+
+### Workflow:
+1. Define a `DatasetRecipe` with a sequence of instructions.
+2. Use the `bake` function to process the recipe and generate a `DatasetBuffer`.
+3. Access and manipulate the resulting dataset as needed.
+
+### Benefits:
+- Modular and reusable dataset creation.
+- Fine-grained control over data filtering, sampling, and transformation.
+- Seamless integration with the `DatasetBuffer` for further operations.
+
+Refer to the codebase documentation for detailed examples and usage patterns.
