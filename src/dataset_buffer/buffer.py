@@ -119,7 +119,8 @@ class DatasetBuffer:
         self,
         data: Optional[Any] = None,
         max_size: Optional[int] = None,
-        drop_strategy: Literal["random", "oldest"] = "oldest"
+        drop_strategy: Literal["random", "oldest"] = "oldest",
+        store_as_string: bool = True
     ):
         """
         Initialize the DatasetBuffer.
@@ -134,6 +135,7 @@ class DatasetBuffer:
         self.max_size = max_size
         self.drop_strategy: Literal["random", "oldest"] = drop_strategy
         self._cur_type: Optional[Type] = None
+        self.store_as_string = store_as_string
         if data is not None:
             self.append(data)
 
@@ -342,10 +344,18 @@ class DatasetBuffer:
         if not normalized:
             return
         all_keys = sorted({key for row in normalized for key in row})
-        aligned = [
-            {key: row.get(key) for key in all_keys} for row in normalized
-        ]
-        new_table = pa.Table.from_pylist(aligned)
+        if self.store_as_string:
+            aligned = [
+                {key: str(row.get(key)) if row.get(key) is not None else None for key in all_keys}
+                for row in normalized
+            ]
+            schema = pa.schema([(key, pa.string()) for key in all_keys])
+            new_table = pa.Table.from_pylist(aligned, schema=schema)
+        else:
+            aligned = [
+                {key: row.get(key) for key in all_keys} for row in normalized
+            ]
+            new_table = pa.Table.from_pylist(aligned)
 
         if len(self.table) == 0:
             self.table = new_table
