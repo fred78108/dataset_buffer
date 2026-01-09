@@ -1,7 +1,7 @@
 """Used to "bake" a dataset recipe"""
 
 import random
-from typing import List
+from typing import List, Literal, Union
 from .structure import (
     DatasetRecipe,
     Ingredient,
@@ -46,7 +46,10 @@ def _process_step(instruction: Instruction, buffer: List) -> None:
         _prepare_data(data=instruction.details, buffer=buffer)
 
 
-def bake(recipe: DatasetRecipe) -> DatasetBuffer:
+def bake(
+    recipe: DatasetRecipe,
+    return_as: Literal["list", "DatasetBuffer"] = "DatasetBuffer"
+) -> Union[DatasetBuffer, list]:
     """Bakes a data recipe into a list.
 
     Args:
@@ -58,4 +61,6 @@ def bake(recipe: DatasetRecipe) -> DatasetBuffer:
     buffer: List = []    # empty buffer
     for bake_step in recipe.instructions:
         _process_step(instruction=bake_step, buffer=buffer)
-    return DatasetBuffer(data=buffer)
+    if return_as == "DatasetBuffer":
+        return DatasetBuffer(data=buffer)
+    return buffer
